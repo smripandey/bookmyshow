@@ -3,19 +3,22 @@ package com.bms.service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import com.bms.exceptions.SeatUnavailableException;
 import com.bms.model.Booking;
 import com.bms.model.Payment;
 import com.bms.model.Seat;
+import com.bms.model.Show;
 import com.bms.repository.BookingRepository;
-import com.bms.repository.SeatRepository;
 
 @Service
 public class BookingServiceImpl implements BookingService {
@@ -24,27 +27,36 @@ public class BookingServiceImpl implements BookingService {
 	private BookingRepository bookingRepository;
 	
 	@Autowired
-	private SeatRepository seatRepository;
+	private GenericService genericService;
 	
 	@Autowired
-	private GenericService genericService;
+	private RestTemplate restTemplate;
+	
+	@Value("$(show.microservice.url")
+	private String showEndpoint;
 	
 	@Override
 	public Booking createBooking(UUID userId, UUID showId, List<Seat> seats) {
 		UUID bookingId = UUID.randomUUID();
 		int totalPrice = 0;
-        StringBuilder sb = new StringBuilder();
-		for(Seat seat:seats) {
-			Optional<Seat>  seatFromDb = seatRepository.findById(seat.getSeatID());
-			Seat oseat = seatFromDb.get();
-			if(oseat.isStatus()) {
-				throw new SeatUnavailableException("The seat number : "+seat.getSeatNumber()+" is already booked");
+		Show show = restTemplate.getForObject(showEndpoint+"/getShowById/"+showId, Show.class);
+		
+		//Checking if all the seats are available or not
+		for(Seat showSeat:show.getSeats()) {
+			for(Seat seat:seats) {
+				if(seat.getSeatID()==showSeat.getSeatID()) {
+					if(showSeat.isStatus()){
+						throw new SeatUnavailableException("The seat number : "+seat.getSeatNumber()+" is already booked");
+					}
+				}
+				totalPrice = totalPrice + seat.getPrice();
 			}
-			totalPrice = totalPrice + seat.getPrice();
-			oseat.setStatus(true);
-			seatRepository.save(oseat);
-			sb.append(oseat.getSeatNumber()+",");
 		}
+		
+		//Calling updateSeat end point for changing the status of seat to booked
+		HttpEntity<List<Seat>> requestEntity = new HttpEntity<List<Seat>>(seats);
+		restTemplate.exchange(showEndpoint+"/updateSeatsByShow/"+showId+"/"+true, HttpMethod.PUT, requestEntity, Seat[].class);
+	
 		Booking booking = new Booking();
 		booking.setBookingId(bookingId);
 		booking.setNoOfSeats(seats.size());
@@ -83,27 +95,15 @@ public class BookingServiceImpl implements BookingService {
 	public Booking cancelBooking(UUID bookingId) {
 		Booking bookingFromDB = bookingRepository.findById(bookingId).get();
 		List<Seat> seats = bookingFromDB.getSeats();
-		for(Seat seat: seats) {
-			Optional<Seat> seatFromDb = seatRepository.findById(seat.getSeatID());
-			if(seatFromDb == null) {
-				throw new NoSuchElementException("Seat not found");
-			}
-			seatFromDb.get().setStatus(false);
-			seatRepository.save(seatFromDb.get());
-		}
+		HttpEntity<List<Seat>> requestEntity = new HttpEntity<List<Seat>>(seats);
+		
+		//releasing seat of specific show and updating it in database
+		restTemplate.exchange(showEndpoint+"/updateSeatsByShow/"+bookingFromDB.getShowId()+"/"+false, HttpMethod.PUT, requestEntity, Seat[].class);
+		
 		genericService.cancelPayment(bookingFromDB.getPaymentId());
 		bookingFromDB.setStatus("CANCELLED");
 		bookingRepository.delete(bookingFromDB);
 		return bookingFromDB;
-	}
-
-	//For testing purpose
-	@Override
-	public void delBooking(UUID bookingId) {
-		// TODO Auto-generated method stub
-		 Optional<Booking> booking = bookingRepository.findById(bookingId);
-		  bookingRepository.delete(booking.get());
-		 
 	}
 	
 }
