@@ -32,7 +32,7 @@ public class BookingServiceImpl implements BookingService {
 	@Autowired
 	private RestTemplate restTemplate;
 	
-	@Value("$(show.microservice.url")
+	@Value("${show.microservice.url}")
 	private String showEndpoint;
 	
 	@Override
@@ -44,13 +44,16 @@ public class BookingServiceImpl implements BookingService {
 		//Checking if all the seats are available or not
 		for(Seat showSeat:show.getSeats()) {
 			for(Seat seat:seats) {
-				if(seat.getSeatID()==showSeat.getSeatID()) {
+				if(seat.getSeatID().compareTo(showSeat.getSeatID())==0) {
 					if(showSeat.isStatus()){
 						throw new SeatUnavailableException("The seat number : "+seat.getSeatNumber()+" is already booked");
 					}
 				}
-				totalPrice = totalPrice + seat.getPrice();
 			}
+		}
+		//Calculating total price of ticket
+		for(Seat seat:seats) {
+			totalPrice = totalPrice + seat.getPrice();
 		}
 		
 		//Calling updateSeat end point for changing the status of seat to booked
